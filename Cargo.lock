@@ -1,0 +1,14 @@
+[[package]]
+name = "exif"
+version = "0.3.0"
+source = "git+https://github.com/kamadak/exif-rs#c2912228c933af49732cc31ad31b222f161cc858"
+
+[[package]]
+name = "photos"
+version = "0.1.0"
+dependencies = [
+ "exif 0.3.0 (git+https://github.com/kamadak/exif-rs)",
+]
+
+[metadata]
+"checksum exif 0.3.0 (git+https://github.com/kamadak/exif-rs)" = "<none>"
