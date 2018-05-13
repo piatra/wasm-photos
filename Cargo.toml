@@ -5,3 +5,5 @@ authors = ["andreioprea"]
 
 [dependencies]
 exif = {git="https://github.com/kamadak/exif-rs"}
+iron = "0.6.0"
+glob = "0.2"

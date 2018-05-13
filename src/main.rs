@@ -1,4 +1,6 @@
 extern crate exif;
+extern crate iron;
+extern crate glob;
 
 use std::env;
 use std::fmt::Write;
@@ -7,7 +9,67 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use exif::{Value, Tag, DateTime};
 
+use iron::prelude::*;
+use iron::headers::ContentType;
+use iron::Handler;
+use iron::status;
+
+use std::collections::HashMap;
+
+use glob::glob;
+
+fn hello_world(_: &mut Request) -> IronResult<Response> {
+    Ok(Response::with((iron::status::Ok, "Hello World")))
+}
+
+struct Router {
+    // Routes here are simply matched with the url path.
+    routes: HashMap<String, Box<Handler>>
+}
+
+impl Router {
+    fn new() -> Self {
+        Router { routes: HashMap::new() }
+    }
+
+    fn add_route<H>(&mut self, path: String, handler: H) where H: Handler {
+        self.routes.insert(path, Box::new(handler));
+    }
+}
+
+impl Handler for Router {
+    fn handle(&self, req: &mut Request) -> IronResult<Response> {
+        match self.routes.get(&req.url.path().join("/")) {
+            Some(handler) => handler.handle(req),
+            None => Ok(Response::with(status::NotFound))
+        }
+    }
+}
+
 fn main() {
+    let mut router = Router::new();
+    router.add_route("hello".to_string(), |_: &mut Request| {
+        Ok(Response::with((status::Ok, "Hello Photos")))
+    });
+    router.add_route("photos".to_string(), |_: &mut Request| {
+        let mut photos: Vec<String> = vec![];
+        for entry in glob("./photos/*").expect("Failed to read glob pattern") {
+            match entry {
+                Ok(path) => { println!("{:?}", path.display()); photos.push(path.into_os_string().into_string().unwrap()) },
+                Err(e) => println!("{:?}", e),
+            }
+        }
+        let mut contents: String = String::new();
+        println!("{:?}", photos);
+        write!(contents, "{{ \"photos\": [\"{}\"] }}", photos.join(","));
+        Ok(Response::with((ContentType::json().0, status::Ok, contents)))
+    });
+
+
+    Iron::new(router).http("localhost:3004").unwrap();
+}
+
+fn read_photo() {
     let path = Path::new("./photos");
     for entry in path.read_dir().expect("read_dir call failed") {
         if let Ok(entry) = entry {
