@@ -1,6 +1,12 @@
 extern crate exif;
 extern crate iron;
+extern crate iron_cors;
 extern crate glob;
+#[macro_use]
+extern crate serde_derive;
+
+extern crate serde;
+extern crate serde_json;
 
 use std::env;
 use std::fmt::Write;
@@ -8,15 +14,42 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use exif::{Value, Tag, DateTime};
+use std::io::{self, Read};
 
 use iron::prelude::*;
 use iron::headers::ContentType;
 use iron::Handler;
 use iron::status;
+use iron_cors::CorsMiddleware;
 
 use std::collections::HashMap;
 
 use glob::glob;
+
+#[derive(Serialize,Deserialize,Debug)]
+struct Photo {
+    path: String,
+    timestamp: String,
+    width: u32,
+    height: u32,
+}
+
+enum Error {
+    ParsePhotoError(String),
+    OtherError(String)
+}
+
+impl From<io::Error> for Error {
+    fn from(error: io::Error) -> Self {
+        Error::OtherError("io error".into())
+    }
+}
+
+impl From<exif::Error> for Error {
+    fn from(error: exif::Error) -> Self {
+        Error::OtherError("exif error".into())
+    }
+}
 
 fn hello_world(_: &mut Request) -> IronResult<Response> {
     Ok(Response::with((iron::status::Ok, "Hello World")))
@@ -48,89 +81,69 @@ impl Handler for Router {
 
 fn main() {
     let mut router = Router::new();
+
     router.add_route("hello".to_string(), |_: &mut Request| {
         Ok(Response::with((status::Ok, "Hello Photos")))
     });
     router.add_route("photos".to_string(), |_: &mut Request| {
-        let mut photos: Vec<String> = vec![];
+        let mut photos: Vec<Photo> = vec![];
         for entry in glob("./photos/*").expect("Failed to read glob pattern") {
             match entry {
-                Ok(path) => { println!("{:?}", path.display()); photos.push(path.into_os_string().into_string().unwrap()) },
+                Ok(path) => match parse_file(path) {
+                    Ok(photo) => photos.push(photo),
+                    _ => println!("error parsing photo"),
+                },
                 Err(e) => println!("{:?}", e),
             }
         }
-        let mut contents: String = String::new();
-        println!("{:?}", photos);
-        write!(contents, "{{ \"photos\": [\"{}\"] }}", photos.join(","));
-        Ok(Response::with((ContentType::json().0, status::Ok, contents)))
+        let s = serde_json::to_string(&photos).unwrap();
+        Ok(Response::with((ContentType::json().0, status::Ok, s)))
     });
 
+    let mut chain = Chain::new(router);
+    let cors_middleware = CorsMiddleware::with_allow_any();
+    chain.link_around(cors_middleware);
 
-    Iron::new(router).http("localhost:3004").unwrap();
+    Iron::new(chain).http("localhost:3004").unwrap();
 }
 
-fn read_photo() {
-    let path = Path::new("./photos");
-    for entry in path.read_dir().expect("read_dir call failed") {
-        if let Ok(entry) = entry {
-            if let Err(e) = dump_file(&entry.path()) {
-                println!("{}: {}", path.display(), e);
-            }
-        }
-    }
-    for path in env::args_os().skip(1).map(PathBuf::from) {
-        if let Err(e) = dump_file(&path) {
-            println!("{}: {}", path.display(), e);
-        }
-    }
-}
-
-fn dump_file(path: &Path) -> Result<(), exif::Error> {
-    let file = try!(File::open(path));
+fn parse_file(path: PathBuf) -> Result<Photo, Error> {
+    let file = try!(File::open(&path));
     let reader = try!(exif::Reader::new(&mut BufReader::new(&file)));
+    let mut datetime = String::new();
+    let mut width = 0;
+    let mut height = 0;
 
     println!("{}", path.display());
-    // for f in reader.fields() {
-    //     let thumb = if f.thumbnail { "1/" } else { "0/" };
-    //     println!("  {}{}: {}", thumb, f.tag, f.value.display_as(f.tag));
-    //     if let exif::Value::Ascii(ref s) = f.value {
-    //         println!("      Ascii({:?})",
-    //                  s.iter().map(escape).collect::<Vec<_>>());
-    //     } else {
-    //         println!("      {:?}", f.value);
-    //     }
-    // }
+
     if let Some(field) = reader.get_field(Tag::DateTime, false) {
         match field.value {
             Value::Ascii(ref vec) if !vec.is_empty() => {
-                if let Ok(datetime) = DateTime::from_ascii(vec[0]) {
-                    println!("Year of DateTime is {}.", datetime.year);
+                if let Ok(d) = DateTime::from_ascii(vec[0]) {
+                    println!("Year of DateTime is {}.", d.year);
+                    datetime = d.to_string();
                 }
             },
             _ => {},
         }
     }
     if let Some(field) = reader.get_field(Tag::PixelXDimension, false) {
-        if let Some(width) = field.value.get_uint(0) {
-            println!("Valid width of the image is {}.", width);
+        if let Some(w) = field.value.get_uint(0) {
+            println!("Valid width of the image is {}.", w);
+            width = w;
         }
     }
     if let Some(field) = reader.get_field(Tag::PixelYDimension, false) {
-        if let Some(height) = field.value.get_uint(0) {
-            println!("Valid height of the image is {}.", height);
+        if let Some(h) = field.value.get_uint(0) {
+            println!("Valid height of the image is {}.", h);
+            height = h;
         }
     }
-    Ok(())
-}
 
-fn escape(bytes: &&[u8]) -> String {
-    let mut buf = String::new();
-    for &c in *bytes {
-        match c {
-            b'\\' | b'"' => write!(buf, "\\{}", c as char).unwrap(),
-            0x20...0x7e => buf.write_char(c as char).unwrap(),
-            _ => write!(buf, "\\x{:02x}", c).unwrap(),
-        }
-    }
-    buf
+    Ok(Photo {
+        path: path.into_os_string().into_string().unwrap(),
+        timestamp: datetime,
+        width: width,
+        height: height,
+        })
 }
