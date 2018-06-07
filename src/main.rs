@@ -7,6 +7,8 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use exif::{Value, Tag, DateTime};
 
+use std::f32;
+
 fn main() {
     let path = Path::new("./photos");
     for entry in path.read_dir().expect("read_dir call failed") {
@@ -28,16 +30,16 @@ fn dump_file(path: &Path) -> Result<(), exif::Error> {
     let reader = try!(exif::Reader::new(&mut BufReader::new(&file)));
 
     println!("{}", path.display());
-    // for f in reader.fields() {
-    //     let thumb = if f.thumbnail { "1/" } else { "0/" };
-    //     println!("  {}{}: {}", thumb, f.tag, f.value.display_as(f.tag));
-    //     if let exif::Value::Ascii(ref s) = f.value {
-    //         println!("      Ascii({:?})",
-    //                  s.iter().map(escape).collect::<Vec<_>>());
-    //     } else {
-    //         println!("      {:?}", f.value);
-    //     }
-    // }
+    for f in reader.fields() {
+        let thumb = if f.thumbnail { "1/" } else { "0/" };
+        println!("  {}{}: {}", thumb, f.tag, f.value.display_as(f.tag));
+        if let exif::Value::Ascii(ref s) = f.value {
+            println!("      Ascii({:?})",
+                     s.iter().map(escape).collect::<Vec<_>>());
+        } else {
+            println!("      {:?}", f.value);
+        }
+    }
     if let Some(field) = reader.get_field(Tag::DateTime, false) {
         match field.value {
             Value::Ascii(ref vec) if !vec.is_empty() => {
@@ -57,6 +59,24 @@ fn dump_file(path: &Path) -> Result<(), exif::Error> {
         if let Some(height) = field.value.get_uint(0) {
             println!("Valid height of the image is {}.", height);
         }
+    }
+    if let Some(field) = reader.get_field(Tag::GPSLatitude, false) {
+        let mut buf = String::new();
+        write!(buf, "{}", field.value.display_as(field.tag));
+        println!("{}: {}", field.tag, field.value.display_as(field.tag));
+        let v = buf.split(" ").collect::<Vec<&str>>();
+        println!("{} {} {}", v[0], v[2], v[4]);
+        let deg: f32 = (v[0].parse::<f32>().unwrap()) + (v[2].parse::<f32>().unwrap() / 60.0) + (v[4].parse::<f32>().unwrap() / 3600.0);
+        println!("> {}", deg);
+    }
+    if let Some(field) = reader.get_field(Tag::GPSLongitude, false) {
+        let mut buf = String::new();
+        write!(buf, "{}", field.value.display_as(field.tag));
+        println!("{}: {}", field.tag, field.value.display_as(field.tag));
+        let v = buf.split(" ").collect::<Vec<&str>>();
+        println!("{} {} {}", v[0], v[2], v[4]);
+        let deg: f32 = (v[0].parse::<f32>().unwrap()) + (v[2].parse::<f32>().unwrap() / 60.0) + (v[4].parse::<f32>().unwrap() / 3600.0);
+        println!("> {}", deg);
     }
     Ok(())
 }
