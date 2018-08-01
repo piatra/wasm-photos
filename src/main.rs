@@ -8,13 +8,12 @@ extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
 
-use std::env;
-use std::fmt::Write;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use exif::{Value, Tag, DateTime};
-use std::io::{self, Read};
+use std::io::{self};
+use std::fmt::Write;
 
 use iron::prelude::*;
 use iron::headers::ContentType;
@@ -32,6 +31,8 @@ struct Photo {
     timestamp: String,
     width: u32,
     height: u32,
+    lat: f32,
+    lng: f32,
 }
 
 enum Error {
@@ -40,19 +41,15 @@ enum Error {
 }
 
 impl From<io::Error> for Error {
-    fn from(error: io::Error) -> Self {
+    fn from(_error: io::Error) -> Self {
         Error::OtherError("io error".into())
     }
 }
 
 impl From<exif::Error> for Error {
-    fn from(error: exif::Error) -> Self {
+    fn from(_error: exif::Error) -> Self {
         Error::OtherError("exif error".into())
     }
-}
-
-fn hello_world(_: &mut Request) -> IronResult<Response> {
-    Ok(Response::with((iron::status::Ok, "Hello World")))
 }
 
 struct Router {
@@ -113,6 +110,8 @@ fn parse_file(path: PathBuf) -> Result<Photo, Error> {
     let mut datetime = String::new();
     let mut width = 0;
     let mut height = 0;
+    let mut lat = 0.0;
+    let mut lng = 0.0;
 
     println!("{}", path.display());
 
@@ -139,11 +138,25 @@ fn parse_file(path: PathBuf) -> Result<Photo, Error> {
             height = h;
         }
     }
+     if let Some(field) = reader.get_field(Tag::GPSLatitude, false) {
+        let mut buf = String::new();
+        write!(buf, "{}", field.value.display_as(field.tag));
+        let v = buf.split(" ").collect::<Vec<&str>>();
+        lat = (v[0].parse::<f32>().unwrap()) + (v[2].parse::<f32>().unwrap() / 60.0) + (v[4].parse::<f32>().unwrap() / 3600.0);
+    }
+    if let Some(field) = reader.get_field(Tag::GPSLongitude, false) {
+        let mut buf = String::new();
+        write!(buf, "{}", field.value.display_as(field.tag));
+        let v = buf.split(" ").collect::<Vec<&str>>();
+        lng = (v[0].parse::<f32>().unwrap()) + (v[2].parse::<f32>().unwrap() / 60.0) + (v[4].parse::<f32>().unwrap() / 3600.0);
+    }
 
     Ok(Photo {
         path: path.into_os_string().into_string().unwrap(),
         timestamp: datetime,
         width: width,
         height: height,
+        lat: lat,
+        lng: lng,
         })
 }
