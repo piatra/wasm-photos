@@ -9,6 +9,7 @@ extern crate serde;
 extern crate serde_json;
 
 use std::fs::File;
+use std::io::prelude::*;
 use std::io::BufReader;
 use std::path::{PathBuf};
 use exif::{Value, Tag, DateTime};
@@ -31,6 +32,17 @@ struct Photo {
     timestamp: String,
     width: u32,
     height: u32,
+    country: Country,
+}
+
+#[derive(Deserialize,Serialize,Debug)]
+struct Country {
+    name: String,
+    location: Location,
+}
+
+#[derive(Serialize,Deserialize,Debug)]
+struct Location {
     lat: f32,
     lng: f32,
 }
@@ -74,6 +86,29 @@ impl Handler for Router {
             None => Ok(Response::with(status::NotFound))
         }
     }
+}
+
+fn distance(a: &Location, b: &Location) -> f32 {
+    (a.lat - b.lat) * (a.lat - b.lat) + (a.lng - b.lng) * (a.lng - b.lng)
+}
+
+fn get_photo_location(photo_location: &Location) -> String {
+    let mut f = File::open("./countries_and_locations.json").expect("file not found");
+    let mut contents = String::new();
+    f.read_to_string(&mut contents).expect("Reading the countries list failed");
+    let countries: Vec<Country> = serde_json::from_str(&contents).expect("Deserializing the countries list failed");
+    let mut closest = distance(photo_location, &countries[0].location);
+    let mut location = String::new();
+    for country in countries {
+        let compare_dist = distance(photo_location, &country.location);
+        if  compare_dist <= closest {
+            closest = compare_dist;
+            location = country.name;
+            println!("{} {}", location, closest);
+        }
+    }
+
+    location
 }
 
 fn main() {
@@ -151,12 +186,19 @@ fn parse_file(path: PathBuf) -> Result<Photo, Error> {
         lng = (v[0].parse::<f32>().unwrap()) + (v[2].parse::<f32>().unwrap() / 60.0) + (v[4].parse::<f32>().unwrap() / 3600.0);
     }
 
+    let location = Location {
+            lat: lat,
+            lng: lng,
+        };
+
     Ok(Photo {
         path: path.into_os_string().into_string().unwrap(),
         timestamp: datetime,
         width: width,
         height: height,
-        lat: lat,
-        lng: lng,
+        country: Country {
+            name: get_photo_location(&location),
+            location,
+            }
         })
 }
