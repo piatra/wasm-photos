@@ -21,10 +21,29 @@ use glob::glob;
 #[derive(Serialize,Deserialize,Debug)]
 struct Photo {
     path: String,
-    timestamp: String,
+    date: PhotoDate,
     width: u32,
     height: u32,
     country: Country,
+}
+
+#[derive(Serialize,Deserialize,Debug)]
+struct PhotoDate {
+    timestamp: String,
+    year: u16,
+    month: u8,
+    day: u8,
+}
+
+impl PhotoDate {
+    fn new(year: u16, month: u8, day: u8, time_str: &str) -> PhotoDate {
+        PhotoDate {
+            timestamp: time_str.to_owned(),
+            year,
+            month,
+            day
+        }
+    }
 }
 
 #[derive(Deserialize,Serialize,Debug)]
@@ -80,15 +99,17 @@ fn get_photo_location(photo_location: &Location) -> String {
 }
 
 fn main() {
-    let mut photos: Vec<Photo> = vec![];
+    let mut photos: HashMap<String, Vec<Photo>> = HashMap::new();
     for entry in glob("./photos/*").expect("Failed to read glob pattern") {
         match entry {
             Ok(path) => match parse_file(path) {
-                Ok(photo) => photos.push(photo),
-                Err(e) => match e {
-                    Error::ParsePhotoError(msg) => println!("Photo parsing error {}", msg),
-                    Error::OtherError(msg) => println!("Other error {}", msg)
-                }
+                Ok(photo) => {
+                    let key = photo.country.name.to_owned() + &photo.date.year.to_string();
+                    photos.entry(key)
+                        .or_insert_with(Vec::new)
+                        .push(photo)
+                },
+                _ => println!("error parsing photo"),
             },
             Err(e) => println!("{:?}", e),
         }
@@ -101,7 +122,7 @@ fn main() {
 fn parse_file(path: PathBuf) -> Result<Photo, Error> {
     let file = try!(File::open(&path));
     let reader = try!(exif::Reader::new(&mut BufReader::new(&file)));
-    let mut datetime = String::new();
+    let mut datetime = PhotoDate::new(0,0,0,"");
     let mut width = 0;
     let mut height = 0;
     let mut lat = 0.0;
@@ -111,9 +132,7 @@ fn parse_file(path: PathBuf) -> Result<Photo, Error> {
         match field.value {
             Value::Ascii(ref vec) if !vec.is_empty() => {
                 if let Ok(d) = DateTime::from_ascii(vec[0]) {
-                    datetime = d.to_string();
-                } else {
-                    return Err(Error::ParsePhotoError("Datetime".into()))
+                    datetime = PhotoDate::new(d.year, d.month, d.day, &d.to_string());
                 }
             },
             _ => return Err(Error::ParsePhotoError("Datetime".into())),
@@ -151,7 +170,7 @@ fn parse_file(path: PathBuf) -> Result<Photo, Error> {
 
     Ok(Photo {
         path: path.into_os_string().into_string().unwrap(),
-        timestamp: datetime,
+        date: datetime,
         width: width,
         height: height,
         country: Country {
