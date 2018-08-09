@@ -1,6 +1,4 @@
 extern crate exif;
-extern crate iron;
-extern crate iron_cors;
 extern crate glob;
 #[macro_use]
 extern crate serde_derive;
@@ -11,16 +9,10 @@ extern crate serde_json;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
+use std::io::Write;
 use std::path::{PathBuf};
 use exif::{Value, Tag, DateTime};
 use std::io::{self};
-use std::fmt::Write;
-
-use iron::prelude::*;
-use iron::headers::ContentType;
-use iron::Handler;
-use iron::status;
-use iron_cors::CorsMiddleware;
 
 use std::collections::HashMap;
 
@@ -64,30 +56,6 @@ impl From<exif::Error> for Error {
     }
 }
 
-struct Router {
-    // Routes here are simply matched with the url path.
-    routes: HashMap<String, Box<Handler>>
-}
-
-impl Router {
-    fn new() -> Self {
-        Router { routes: HashMap::new() }
-    }
-
-    fn add_route<H>(&mut self, path: String, handler: H) where H: Handler {
-        self.routes.insert(path, Box::new(handler));
-    }
-}
-
-impl Handler for Router {
-    fn handle(&self, req: &mut Request) -> IronResult<Response> {
-        match self.routes.get(&req.url.path().join("/")) {
-            Some(handler) => handler.handle(req),
-            None => Ok(Response::with(status::NotFound))
-        }
-    }
-}
-
 fn distance(a: &Location, b: &Location) -> f32 {
     (a.lat - b.lat) * (a.lat - b.lat) + (a.lng - b.lng) * (a.lng - b.lng)
 }
@@ -112,31 +80,22 @@ fn get_photo_location(photo_location: &Location) -> String {
 }
 
 fn main() {
-    let mut router = Router::new();
-
-    router.add_route("hello".to_string(), |_: &mut Request| {
-        Ok(Response::with((status::Ok, "Hello Photos")))
-    });
-    router.add_route("photos".to_string(), |_: &mut Request| {
-        let mut photos: Vec<Photo> = vec![];
-        for entry in glob("./photos/*").expect("Failed to read glob pattern") {
-            match entry {
-                Ok(path) => match parse_file(path) {
-                    Ok(photo) => photos.push(photo),
-                    _ => println!("error parsing photo"),
-                },
-                Err(e) => println!("{:?}", e),
-            }
+    let mut photos: Vec<Photo> = vec![];
+    for entry in glob("./photos/*").expect("Failed to read glob pattern") {
+        match entry {
+            Ok(path) => match parse_file(path) {
+                Ok(photo) => photos.push(photo),
+                Err(e) => match e {
+                    Error::ParsePhotoError(msg) => println!("Photo parsing error {}", msg),
+                    Error::OtherError(msg) => println!("Other error {}", msg)
+                }
+            },
+            Err(e) => println!("{:?}", e),
         }
-        let s = serde_json::to_string(&photos).unwrap();
-        Ok(Response::with((ContentType::json().0, status::Ok, s)))
-    });
-
-    let mut chain = Chain::new(router);
-    let cors_middleware = CorsMiddleware::with_allow_any();
-    chain.link_around(cors_middleware);
-
-    Iron::new(chain).http("localhost:3004").unwrap();
+    }
+    let s = serde_json::to_string(&photos).unwrap();
+    let mut file = File::create("output.json").unwrap();
+    file.write_all(s.as_ref());
 }
 
 fn parse_file(path: PathBuf) -> Result<Photo, Error> {
@@ -148,40 +107,39 @@ fn parse_file(path: PathBuf) -> Result<Photo, Error> {
     let mut lat = 0.0;
     let mut lng = 0.0;
 
-    println!("{}", path.display());
-
     if let Some(field) = reader.get_field(Tag::DateTime, false) {
         match field.value {
             Value::Ascii(ref vec) if !vec.is_empty() => {
                 if let Ok(d) = DateTime::from_ascii(vec[0]) {
-                    println!("Year of DateTime is {}.", d.year);
                     datetime = d.to_string();
+                } else {
+                    return Err(Error::ParsePhotoError("Datetime".into()))
                 }
             },
-            _ => {},
+            _ => return Err(Error::ParsePhotoError("Datetime".into())),
         }
     }
     if let Some(field) = reader.get_field(Tag::PixelXDimension, false) {
         if let Some(w) = field.value.get_uint(0) {
-            println!("Valid width of the image is {}.", w);
             width = w;
+        } else {
+            return Err(Error::ParsePhotoError("Dimensions".into()))
         }
     }
     if let Some(field) = reader.get_field(Tag::PixelYDimension, false) {
         if let Some(h) = field.value.get_uint(0) {
-            println!("Valid height of the image is {}.", h);
             height = h;
+        } else {
+            return Err(Error::ParsePhotoError("Dimensions".into()))
         }
     }
      if let Some(field) = reader.get_field(Tag::GPSLatitude, false) {
-        let mut buf = String::new();
-        write!(buf, "{}", field.value.display_as(field.tag));
+        let buf = format!("{}", field.value.display_as(field.tag));
         let v = buf.split(" ").collect::<Vec<&str>>();
         lat = (v[0].parse::<f32>().unwrap()) + (v[2].parse::<f32>().unwrap() / 60.0) + (v[4].parse::<f32>().unwrap() / 3600.0);
     }
     if let Some(field) = reader.get_field(Tag::GPSLongitude, false) {
-        let mut buf = String::new();
-        write!(buf, "{}", field.value.display_as(field.tag));
+        let buf = format!("{}", field.value.display_as(field.tag));
         let v = buf.split(" ").collect::<Vec<&str>>();
         lng = (v[0].parse::<f32>().unwrap()) + (v[2].parse::<f32>().unwrap() / 60.0) + (v[4].parse::<f32>().unwrap() / 3600.0);
     }
