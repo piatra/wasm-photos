@@ -80,10 +80,10 @@ fn distance(a: &Location, b: &Location) -> f32 {
 }
 
 fn get_photo_location(photo_location: &Location) -> String {
-    let mut f = File::open("./countries_and_locations.json").expect("file not found");
+    let mut f = File::open("./countries_and_locations.json").unwrap();
     let mut contents = String::new();
-    f.read_to_string(&mut contents).expect("Reading the countries list failed");
-    let countries: Vec<Country> = serde_json::from_str(&contents).expect("Deserializing the countries list failed");
+    f.read_to_string(&mut contents).unwrap();
+    let countries: Vec<Country> = serde_json::from_str(&contents).unwrap();
     let mut closest = distance(photo_location, &countries[0].location);
     let mut location = String::new();
     for country in countries {
@@ -116,13 +116,19 @@ fn main() {
     }
     let s = serde_json::to_string(&photos).unwrap();
     let mut file = File::create("output.json").unwrap();
-    file.write_all(s.as_ref());
+    if let Err(e) = file.write_all(s.as_ref()) {
+        eprintln!("Error trying to write to output {:?}", e);
+    }
+}
+
+fn to_f32(s: &str) -> f32 {
+    s.parse().unwrap()
 }
 
 fn parse_file(path: PathBuf) -> Result<Photo, Error> {
-    let file = try!(File::open(&path));
-    let reader = try!(exif::Reader::new(&mut BufReader::new(&file)));
-    let mut datetime = PhotoDate::new(0,0,0,"");
+    let file = File::open(&path)?;
+    let reader = exif::Reader::new(&mut BufReader::new(&file))?;
+    let datetime;
     let mut width = 0;
     let mut height = 0;
     let mut lat = 0.0;
@@ -133,11 +139,16 @@ fn parse_file(path: PathBuf) -> Result<Photo, Error> {
             Value::Ascii(ref vec) if !vec.is_empty() => {
                 if let Ok(d) = DateTime::from_ascii(vec[0]) {
                     datetime = PhotoDate::new(d.year, d.month, d.day, &d.to_string());
+                } else {
+                    return Err(Error::ParsePhotoError("Datetime".into()));
                 }
             },
             _ => return Err(Error::ParsePhotoError("Datetime".into())),
         }
+    } else {
+        return Err(Error::ParsePhotoError("Datetime".into()));
     }
+
     if let Some(field) = reader.get_field(Tag::PixelXDimension, false) {
         if let Some(w) = field.value.get_uint(0) {
             width = w;
@@ -155,12 +166,12 @@ fn parse_file(path: PathBuf) -> Result<Photo, Error> {
      if let Some(field) = reader.get_field(Tag::GPSLatitude, false) {
         let buf = format!("{}", field.value.display_as(field.tag));
         let v = buf.split(" ").collect::<Vec<&str>>();
-        lat = (v[0].parse::<f32>().unwrap()) + (v[2].parse::<f32>().unwrap() / 60.0) + (v[4].parse::<f32>().unwrap() / 3600.0);
+        lat = to_f32(v[0]) + (to_f32(v[2]) / 60.0) + (to_f32(v[4]) / 3600.0);
     }
     if let Some(field) = reader.get_field(Tag::GPSLongitude, false) {
         let buf = format!("{}", field.value.display_as(field.tag));
         let v = buf.split(" ").collect::<Vec<&str>>();
-        lng = (v[0].parse::<f32>().unwrap()) + (v[2].parse::<f32>().unwrap() / 60.0) + (v[4].parse::<f32>().unwrap() / 3600.0);
+        lng = to_f32(v[0]) + (to_f32(v[2]) / 60.0) + (to_f32(v[4]) / 3600.0);
     }
 
     let location = Location {
