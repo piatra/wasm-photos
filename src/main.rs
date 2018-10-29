@@ -1,5 +1,9 @@
 extern crate exif;
 extern crate glob;
+extern crate image;
+
+use image::{FilterType, PNG, GenericImageView};
+
 #[macro_use]
 extern crate serde_derive;
 
@@ -79,6 +83,24 @@ fn distance(a: &Location, b: &Location) -> f32 {
     (a.lat - b.lat) * (a.lat - b.lat) + (a.lng - b.lng) * (a.lng - b.lng)
 }
 
+fn resize(path: PathBuf) -> () {
+    match image::open(&path) {
+        Ok(img) => {
+            let (width, height) = img.dimensions();
+            let ratio: f32 = if width > height {
+                300.0 / width as f32
+            } else {
+                300.0 / height as f32
+            };
+            let scaled = img.resize((width as f32 * ratio) as u32, (height as f32 * ratio) as u32, FilterType::Gaussian);
+            let name = path.into_os_string().into_string().unwrap();
+            let mut output = File::create(&format!("test-{}.png", name)).unwrap();
+            scaled.write_to(&mut output, PNG).unwrap();
+        }
+        _ => println!("Could not find {:?}", path)
+    }
+}
+
 fn get_photo_location(photo_location: &Location) -> String {
     let mut f = File::open("./countries_and_locations.json").unwrap();
     let mut contents = String::new();
@@ -102,8 +124,9 @@ fn main() {
     let mut photos: HashMap<String, Vec<Photo>> = HashMap::new();
     for entry in glob("./photos/*").expect("Failed to read glob pattern") {
         match entry {
-            Ok(path) => match parse_file(path) {
+            Ok(path) => match parse_file(path.clone()) {
                 Ok(photo) => {
+                    resize(path);
                     let key = photo.country.name.to_owned() + &photo.date.year.to_string();
                     photos.entry(key)
                         .or_insert_with(Vec::new)

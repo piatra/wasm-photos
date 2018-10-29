@@ -2,3 +2,6 @@
 /target
 **/*.rs.bk
 output.json
+photos
+test-photos
+.DS_Store
